@@ -21,12 +21,16 @@ See http://robertoostenveld.nl/art-net-to-dmx512-with-esp8266/ for more details 
 # Wiring scheme
  - connect 5V and GND from the power supply to Vcc and GND of the MAX485 module
  - connect 5V and GND from the power supply to the 5V and GND of the Wemos D1 mini
- - connect pin DE (data enable) of the MAX485 module to 3.3V (using 3.3V TTL)
- - connect pin RE (receive enable) of the MAX485 module to GND
- - connect pin D4/TX1 of the Wemos D1 mini to the DI (data in) pin of the MAX485 module (using 3.3V TTL)
- - connect pin A of the MAX485 module to XLR 3
- - connect pin B of the MAX485 module to XLR 2
- - connect GND                        to XLR 1
+
+ - connect MAX485 module pin DE (data enable)    to 3.3V (using 3.3V TTL)
+ - connect MAX485 module pin RE (receive enable) to GND
+ - connect MAX485 module pin DI (data in)        to D4/TX1 of the Wemos D1 mini (using 3.3V TTL)
+
+ - connect MAX485 module VCC   to 3.3V (or to DE)
+ - connect MAX485 module pin A to XLR 3
+ - connect MAX485 module pin B to XLR 2
+ - connect MAX485 module GND   to XLR 1
+ 
  - connect the blue  leg of the LED over the 100 Ohm resistor to GPIO16/D0
  - connect the green leg of the LED over the 220 Ohm resistor to GPIO05/D1
  - connect the red   leg of the LED over the 220 Ohm resistor to GPIO04/D2
