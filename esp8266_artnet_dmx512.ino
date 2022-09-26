@@ -10,7 +10,7 @@
 // This is the original way this sketch used to work and expects the max485 level
 // shifter to be connected to the pin that corresondents to Serial1.
 // On a Wemos D1 this is e.g. pin D4.
-#define ENABLE_UART
+//#define ENABLE_UART
 
 // Uncomment to send DMX data via I2S instead of UART.
 // I2S allows for better control of number of stop bits and DMX timing.
