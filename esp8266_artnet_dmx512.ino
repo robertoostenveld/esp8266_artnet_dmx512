@@ -19,6 +19,10 @@
 #define ENABLE_I2S
 #define I2S_FREQUENCY_CORRECTION (0)
 
+// Enable kind of unit test for new I2S code moving around a knowingly picky device 
+// (china brand moving head with timing issues)
+//#define WITH_TEST_CODE
+
 #include <ESP8266WiFi.h>         // https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
@@ -42,7 +46,6 @@
 
 Config config;
 
-
 ESP8266WebServer server(80);
 const char* host = "ARTNET";
 const char* version = __DATE__ " / " __TIME__;
@@ -58,30 +61,28 @@ const char* version = __DATE__ " / " __TIME__;
 // Artnet settings
 ArtnetWifi artnet;
 
-
 unsigned long packetCounter = 0, frameCounter = 0;
 float fps = 0;
 
 #ifdef ENABLE_I2S
 
+#define I2S_PIN 3
 #define DMX_CHANNELS 512
 
-// 
-//#define SHORT_SPACE_FOR_BREAK
+
 // Below timings are based on measures taken with a commercial DMX512 controller.
+// They differ substentially from the offcial DMX standard ... breaks are longer, more
+// stop bits. Apparently to please some picky devices out there that cannot handle
+// DMX data quickly enough.
 struct {
   uint16_t mark_before_break[10]; // 600us / 4us / 16 bits -> 640us
-  #ifdef SHORT_SPACE_FOR_BREAK
-  uint8_t space_for_break[3]; // 120us / 4us / 8 bits = 3.75
-  uint8_t mark_after_break;   // 5 MSB low bits * 4us adds 20us to space_for_break -> 116us
-  #else
   uint16_t space_for_break[2]; // 120us / 4us / 16 bits -> 128 us
   uint16_t mark_after_break; // 13 MSB low bits *4us adds 52us to space_for_break -> 180us
-  #endif
   // each "byte" (actually a word) consists of:
   // 8 bits payload + 7 stop bits (high) + 1 start (low) for the next byte  
   uint16_t dmx_bytes[DMX_CHANNELS+1];
 } i2s_data;
+
 
 #endif
 
@@ -95,6 +96,7 @@ struct {
   uint8_t *data;
 #endif
 } global;
+#define WITH_WIFI
 
 // keep track of the timing of the function calls
 long tic_loop = 0, tic_fps = 0, tic_packet = 0, tic_web = 0;
@@ -137,8 +139,7 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
     }
 #endif
 
-#ifdef ENABLE_UART
-    
+#ifdef ENABLE_UART    
     // copy the data from the UDP packet over to the global universe buffer
     global.universe = universe;
     global.sequence = sequence;
@@ -146,19 +147,9 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
       global.length = length;
     for (int i = 0; i < global.length; i++)
       global.data[i] = data[i];
-
 #endif
   }
 } // onDmxpacket
-
-
-
-long packets;
-long last;
-
-const int CONNECTION_TIMEOUT = 5;
-
-//#define WITH_TEST_CODE
 
 void setup() {
   
@@ -275,8 +266,13 @@ void loop() {
     }
   }
 
+  #ifdef WITH_TEST_CODE
+  testCode();
+  #endif
+  
   delay(1);
 } // loop
+
 
 
 #ifdef ENABLE_UART
@@ -302,58 +298,44 @@ void outputSerial() {
   }  
 }
 
-#endif
+#endif // ENABLE_UART
 
 #ifdef ENABLE_I2S
 
 void initI2S() {
-    pinMode(3, OUTPUT); // Override default Serial initiation
-    digitalWrite(3, 1); // Set pin high
+  pinMode(I2S_PIN, OUTPUT); // Override default Serial initiation
+  digitalWrite(I2S_PIN, 1); // Set pin high
+
+  memset(&i2s_data, 0x00, sizeof(i2s_data));
+  memset(&(i2s_data.mark_before_break), 0xff, sizeof(i2s_data.mark_before_break));
   
-    memset(&i2s_data, 0x00, sizeof(i2s_data));
-    memset(&(i2s_data.mark_before_break), 0xff, sizeof(i2s_data.mark_before_break));
-    
-    // 3 bits (12us) MAB. The MAB's LSB 0 acts as the start bit (low) for the null byte
-    i2s_data.mark_after_break = (uint16_t) 0b000001110;
-    
-    // Set LSB to 0 for every byte to act as the start bit of the following byte.
-    // Sending 7 stop bits in stead of 2 will please slow/buggy hardware and act
-    // as the mark time between slots.
-    for (int i=0; i<DMX_CHANNELS; i++) {
-      i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
-    }
-    // Set MSB NOT to 0 for the last byte because MBB (mark for break will follow)
-    i2s_data.dmx_bytes[DMX_CHANNELS] = (uint16_t) 0b0000000011111111;
+  // 3 bits (12us) MAB. The MAB's LSB 0 acts as the start bit (low) for the null byte
+  i2s_data.mark_after_break = (uint16_t) 0b000001110;
   
-    config.universe = 0;
-  
-    artnet.begin();
-    artnet.setArtDmxCallback(onDmxPacket);
-  
-    i2s_begin();
-    // 250.000 baud / 32 bits = 7812
-    i2s_set_rate(7812); 
-  
-    // Commment in this to fine tune frequency: should be 125 kHz (on oscillocope)
-    //memset(&data, 0b01010101, sizeof(data));
+  // Set LSB to 0 for every byte to act as the start bit of the following byte.
+  // Sending 7 stop bits in stead of 2 will please slow/buggy hardware and act
+  // as the mark time between slots.
+  for (int i=0; i<DMX_CHANNELS; i++) {
+    i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
+  }
+  // Set MSB NOT to 0 for the last byte because MBB (mark for break will follow)
+  i2s_data.dmx_bytes[DMX_CHANNELS] = (uint16_t) 0b0000000011111111;
+
+  config.universe = 0;
+
+  i2s_begin();
+  // 250.000 baud / 32 bits = 7812
+  i2s_set_rate(7812); 
+
+  // Use this to fine tune frequency: should be 125 kHz
+  //memset(&data, 0b01010101, sizeof(data));  
 }
 
 void outputI2S(void) {  
   // From the comment in i2s.h: 
   // "A frame is just a int16_t for mono, for stereo a frame is two int16_t, one for each channel."
   // Therefore we need to divide by 4 in total
-  int frames = sizeof(i2s_data)/4;
-  i2s_write_buffer((int16_t*) &i2s_data, frames);
-
-  i2sCounter++;
-  long now = millis();
-  if ((now - tic_i2s) > 1000 && i2sCounter > 100) {
-    // don't estimate the FPS too frequently
-    float pps = (1000.0 * i2sCounter) / (now - tic_i2s);
-    tic_i2s = now;
-    i2sCounter = 0;
-    Serial.printf("I2S: %.1f p/s\n", pps);
-  }
+  i2s_write_buffer((int16_t*) &i2s_data, sizeof(i2s_data)/4);
 }
 
 // Reverse byte order because DMX expects LSB first but I2S sends MSB first.
@@ -364,8 +346,7 @@ byte flipByte(byte c) {
   return c;
 }
 
-#endif
-
+#endif // ENABLE_I2S
 
 #ifdef ENABLE_WEBINTERFACE
 
@@ -475,7 +456,8 @@ void initServer() {
   // start the web server
   server.begin();
 }
-#endif
+
+#endif // ifdef ENABLE_WEBINTERFACE
 
 #ifdef COMMON_ANODE
 
@@ -542,3 +524,26 @@ void allBlack() {
 }
 
 #endif
+
+#ifdef WITH_TEST_CODE
+void testCode() {
+  long now = millis();
+  uint8_t x = (now/20) % 240;
+  if (x>120) {
+    x=240-x;
+  }
+  
+  Serial.printf("x: %d\n", x);
+  
+  i2s_data.dmx_bytes[1] = (flipByte(x)<<8) | 0b0000000011111110;  // x 0 - 170
+  i2s_data.dmx_bytes[2] = (flipByte(0)<<8) | 0b0000000011111110; // x fine
+  
+  i2s_data.dmx_bytes[3] = (flipByte(x)<<8) | 0b0000000011111110;  // y: 0: -horz. 120: vert, 240: +horz  
+  i2s_data.dmx_bytes[4] = (flipByte(0)<<8) | 0b0000000011111110; // y fine
+  
+  i2s_data.dmx_bytes[5] = (flipByte(30)<<8) | 0b0000000011111110; // color wheel: red
+  i2s_data.dmx_bytes[6] = (flipByte(0)<<8)   | 0b0000000011111110; // pattern 
+  i2s_data.dmx_bytes[7] = (flipByte(0)<<8)   | 0b0000000011111110; // strobe
+  i2s_data.dmx_bytes[8] = (flipByte(150)<<8) | 0b0000000011111110; // brightness
+}
+#endif // ENABLE_WEBINTERFACE
