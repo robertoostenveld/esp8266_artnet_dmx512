@@ -6,6 +6,13 @@
 
 */
 
+// Comment in to enable standalone mode. This means that the setup function won't 
+// block until the device was configured to connect to a Wifi network but will start
+// to receive Artnet data right away on the access point network the WifiManager 
+// created for this purpose. You can then simply ignore the configuration attempt and
+// use the device without a local Wifi network or choose to connect one later.
+//#define ENABLE_STANDALONE
+
 // Uncomment to send DMX data using the microcontroller's builtin UART.
 // This is the original way this sketch used to work and expects the max485 level
 // shifter to be connected to the pin that corresondents to Serial1.
@@ -16,14 +23,15 @@
 // I2S allows for better control of number of stop bits and DMX timing.
 // Moreover using DMA reduces strain of the CPU and avoids issues with background 
 // activity such as handling WiFi, interrupts etc.
-// #define ENABLE_I2S
+//#define ENABLE_I2S
 
 // Enable kind of unit test for new I2S code moving around a knowingly picky device 
 // (china brand moving head with timing issues)
 #ifdef ENABLE_I2S
-#define WITH_TEST_CODE
+//#define WITH_TEST_CODE
 #endif
 
+// Enable OTA (over the air programming in the Arduino GUI)
 #define ENABLE_ARDUINO_OTA
 
 #include <ESP8266WiFi.h>         // https://github.com/esp8266/Arduino
@@ -33,7 +41,9 @@
 #include <WiFiClient.h>
 #include <ArtnetWifi.h>          // https://github.com/rstephan/ArtnetWifi
 #include <FS.h>
-
+#ifdef ENABLE_ARDUINO_OTA
+#include <ArduinoOTA.h>
+#endif
 #ifdef ENABLE_I2S
 #include <i2s.h>
 #include <i2s_reg.h>
@@ -63,8 +73,9 @@ const char* version = __DATE__ " / " __TIME__;
 
 // Artnet settings
 ArtnetWifi artnet;
+WiFiManager wifiManager;
 
-unsigned long packetCounter = 0, frameCounter = 0;
+unsigned long packetCounter = 0, frameCounter = 0, last_packet_received = 0;
 float fps = 0;
 
 // Global universe buffer
@@ -97,13 +108,15 @@ unsigned long i2sCounter;
 
 //this will be called for each UDP packet received
 void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t * data) {
+  last_packet_received = millis();
+  
   // print some feedback
   Serial.print("packetCounter = ");
   Serial.print(packetCounter++);
   if ((millis() - tic_fps) > 1000 && frameCounter > 100) {
     // don't estimate the FPS too frequently
     fps = 1000 * frameCounter / (millis() - tic_fps);
-    tic_fps = millis();
+    tic_fps = last_packet_received;
     frameCounter = 0;
     Serial.print(",  FPS = ");
     Serial.print(fps);
@@ -166,6 +179,7 @@ void setup() {
 
   SPIFFS.begin();
 
+  Serial.println("Loading configuration");
   initialConfig();
 
   if (loadConfig()) {
@@ -181,8 +195,13 @@ void setup() {
     singleRed();
 
   Serial.println("Starting WiFiManager");
-  WiFiManager wifiManager;
   wifiManager.resetSettings();
+#ifdef ENABLE_STANDALONE
+  Serial.println("Starting WiFiManager (non-blocking)");
+  wifiManager.setConfigPortalBlocking(false);
+#else  
+  Serial.println("Starting WiFiManager (blocking)");
+#endif  
   WiFi.hostname(host);
   wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
   wifiManager.autoConnect(host);
@@ -221,13 +240,23 @@ void setup() {
 } // setup
 
 void loop() {
+  // handle those servers only when not receiving DMX data
+  long now = millis();
+  if (now-last_packet_received > 1000) {
+    wifiManager.process();
+    ArduinoOTA.handle();
+  }
   server.handleClient();
 
   if (WiFi.status() != WL_CONNECTED) {
     singleRed();
     delay(10);
-  }
-  else if ((millis() - tic_web) < 5000) {
+#ifndef ENABLE_STANDALONE
+    return;
+#endif    
+  } 
+  
+  if ((millis() - tic_web) < 5000) {
     singleBlue();
     delay(25);
   }
@@ -254,7 +283,7 @@ void loop() {
   testCode();
   #endif
   
-  delay(1);
+  //delay(1);
 } // loop
 
 #ifdef ENABLE_UART
@@ -318,6 +347,16 @@ void outputI2S(void) {
   // "A frame is just a int16_t for mono, for stereo a frame is two int16_t, one for each channel."
   // Therefore we need to divide by 4 in total
   i2s_write_buffer((int16_t*) &global.i2s_data, sizeof(global.i2s_data)/4);
+
+  i2sCounter++;
+  long now = millis();
+  if ((now - tic_i2s) > 1000 && i2sCounter > 100) {
+    // don't estimate the FPS too frequently
+    float pps = (1000.0 * i2sCounter) / (now - tic_i2s);
+    tic_i2s = now;
+    i2sCounter = 0;
+    Serial.printf("I2S: %.1f p/s\n", pps);
+  }  
 }
 
 // Reverse byte order because DMX expects LSB first but I2S sends MSB first.
@@ -514,7 +553,7 @@ void testCode() {
     x=240-x;
   }
   
-  Serial.printf("x: %d\n", x);
+  //Serial.printf("x: %d\n", x);
   
   global.i2s_data.dmx_bytes[1] = (flipByte(x)<<8) | 0b0000000011111110;  // x 0 - 170
   global.i2s_data.dmx_bytes[2] = (flipByte(0)<<8) | 0b0000000011111110; // x fine
