@@ -10,14 +10,14 @@
 // This is the original way this sketch used to work and expects the max485 level
 // shifter to be connected to the pin that corresondents to Serial1.
 // On a Wemos D1 this is e.g. pin D4.
-//#define ENABLE_UART
+#define ENABLE_UART
 
 // Uncomment to send DMX data via I2S instead of UART.
 // I2S allows for better control of number of stop bits and DMX timing.
 // Moreover using DMA reduces strain of the CPU and avoids issues with background 
 // activity such as handling WiFi, interrupts etc.
-#define ENABLE_I2S
-#define I2S_FREQUENCY_CORRECTION (0)
+// #define ENABLE_I2S
+// #define I2S_FREQUENCY_CORRECTION (0)
 
 // Enable kind of unit test for new I2S code moving around a knowingly picky device 
 // (china brand moving head with timing issues)
