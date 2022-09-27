@@ -17,11 +17,14 @@
 // Moreover using DMA reduces strain of the CPU and avoids issues with background 
 // activity such as handling WiFi, interrupts etc.
 // #define ENABLE_I2S
-// #define I2S_FREQUENCY_CORRECTION (0)
 
 // Enable kind of unit test for new I2S code moving around a knowingly picky device 
 // (china brand moving head with timing issues)
-//#define WITH_TEST_CODE
+#ifdef ENABLE_I2S
+#define WITH_TEST_CODE
+#endif
+
+#define ENABLE_ARDUINO_OTA
 
 #include <ESP8266WiFi.h>         // https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>
@@ -34,6 +37,7 @@
 #ifdef ENABLE_I2S
 #include <i2s.h>
 #include <i2s_reg.h>
+#include "i2s_dmx.h"
 #endif
 
 #include "setup_ota.h"
@@ -45,7 +49,6 @@
 // #define COMMON_ANODE
 
 Config config;
-
 ESP8266WebServer server(80);
 const char* host = "ARTNET";
 const char* version = __DATE__ " / " __TIME__;
@@ -64,28 +67,6 @@ ArtnetWifi artnet;
 unsigned long packetCounter = 0, frameCounter = 0;
 float fps = 0;
 
-#ifdef ENABLE_I2S
-
-#define I2S_PIN 3
-#define DMX_CHANNELS 512
-
-
-// Below timings are based on measures taken with a commercial DMX512 controller.
-// They differ substentially from the offcial DMX standard ... breaks are longer, more
-// stop bits. Apparently to please some picky devices out there that cannot handle
-// DMX data quickly enough.
-struct {
-  uint16_t mark_before_break[10]; // 600us / 4us / 16 bits -> 640us
-  uint16_t space_for_break[2]; // 120us / 4us / 16 bits -> 128 us
-  uint16_t mark_after_break; // 13 MSB low bits *4us adds 52us to space_for_break -> 180us
-  // each "byte" (actually a word) consists of:
-  // 8 bits payload + 7 stop bits (high) + 1 start (low) for the next byte  
-  uint16_t dmx_bytes[DMX_CHANNELS+1];
-} i2s_data;
-
-
-#endif
-
 // Global universe buffer
 struct {
   uint16_t universe;
@@ -94,6 +75,9 @@ struct {
   // when using I2S, channel values are stored in i2s_data
 #ifdef ENABLE_UART
   uint8_t *data;
+#endif
+#ifdef ENABLE_I2S
+  i2s_packet i2s_data;
 #endif
 } global;
 #define WITH_WIFI
@@ -135,7 +119,7 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
       // Add stop bits and start bit of next byte unless there is no next byte.
       uint16_t lo = i==DMX_CHANNELS-1 ? 0b0000000011111111 : 0b0000000011111110;
       // leave null/start byte untached => +1:
-      i2s_data.dmx_bytes[i+1] = (hi<<8) | lo;
+      global.i2s_data.dmx_bytes[i+1] = (hi<<8) | lo;
     }
 #endif
 
@@ -162,11 +146,6 @@ void setup() {
   }
   Serial.println("setup starting");
 
-  // Must NOT be called before Serial.begin (i@S output is on RX0 pin)
-#ifdef ENABLE_I2S  
-  initI2S();
-#endif
-
   pinMode(LED_R, OUTPUT);
   pinMode(LED_G, OUTPUT);
   pinMode(LED_B, OUTPUT);
@@ -178,6 +157,11 @@ void setup() {
   global.data = (uint8_t *)malloc(512);
   for (int i = 0; i < 512; i++)
     global.data[i] = 0;
+#endif
+#ifdef ENABLE_I2S  
+  // Must NOT be called before Serial.begin I2S output is on RX0 pin which would
+  // be reset to input mode for serial data rather than output for I2S data.
+  initI2S();
 #endif
 
   SPIFFS.begin();
@@ -196,8 +180,9 @@ void setup() {
   if (WiFi.status() != WL_CONNECTED)
     singleRed();
 
+  Serial.println("Starting WiFiManager");
   WiFiManager wifiManager;
-  // wifiManager.resetSettings();
+  wifiManager.resetSettings();
   WiFi.hostname(host);
   wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
   wifiManager.autoConnect(host);
@@ -234,7 +219,6 @@ void setup() {
 
   Serial.println("setup done");
 } // setup
-
 
 void loop() {
   server.handleClient();
@@ -273,8 +257,6 @@ void loop() {
   delay(1);
 } // loop
 
-
-
 #ifdef ENABLE_UART
 
 void outputSerial() {
@@ -306,20 +288,20 @@ void initI2S() {
   pinMode(I2S_PIN, OUTPUT); // Override default Serial initiation
   digitalWrite(I2S_PIN, 1); // Set pin high
 
-  memset(&i2s_data, 0x00, sizeof(i2s_data));
-  memset(&(i2s_data.mark_before_break), 0xff, sizeof(i2s_data.mark_before_break));
+  memset(&(global.i2s_data), 0x00, sizeof(global.i2s_data));
+  memset(&(global.i2s_data.mark_before_break), 0xff, sizeof(global.i2s_data.mark_before_break));
   
   // 3 bits (12us) MAB. The MAB's LSB 0 acts as the start bit (low) for the null byte
-  i2s_data.mark_after_break = (uint16_t) 0b000001110;
+  global.i2s_data.mark_after_break = (uint16_t) 0b000001110;
   
   // Set LSB to 0 for every byte to act as the start bit of the following byte.
   // Sending 7 stop bits in stead of 2 will please slow/buggy hardware and act
   // as the mark time between slots.
   for (int i=0; i<DMX_CHANNELS; i++) {
-    i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
+    global.i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
   }
   // Set MSB NOT to 0 for the last byte because MBB (mark for break will follow)
-  i2s_data.dmx_bytes[DMX_CHANNELS] = (uint16_t) 0b0000000011111111;
+  global.i2s_data.dmx_bytes[DMX_CHANNELS] = (uint16_t) 0b0000000011111111;
 
   config.universe = 0;
 
@@ -335,15 +317,14 @@ void outputI2S(void) {
   // From the comment in i2s.h: 
   // "A frame is just a int16_t for mono, for stereo a frame is two int16_t, one for each channel."
   // Therefore we need to divide by 4 in total
-  i2s_write_buffer((int16_t*) &i2s_data, sizeof(i2s_data)/4);
+  i2s_write_buffer((int16_t*) &global.i2s_data, sizeof(global.i2s_data)/4);
 }
 
 // Reverse byte order because DMX expects LSB first but I2S sends MSB first.
 byte flipByte(byte c) {
-  c = ((c>>1)&0x55)|((c<<1)&0xAA);
-  c = ((c>>2)&0x33)|((c<<2)&0xCC);
-  c = (c>>4) | (c<<4) ;
-  return c;
+  c = ((c>>1) & 0b01010101) | ((c<<1) & 0b10101010);
+  c = ((c>>2) & 0b00110011) | ((c<<2) & 0b11001100);
+  return (c>>4) | (c<<4) ;
 }
 
 #endif // ENABLE_I2S
@@ -528,22 +509,22 @@ void allBlack() {
 #ifdef WITH_TEST_CODE
 void testCode() {
   long now = millis();
-  uint8_t x = (now/20) % 240;
+  uint8_t x = (now/60) % 240;
   if (x>120) {
     x=240-x;
   }
   
   Serial.printf("x: %d\n", x);
   
-  i2s_data.dmx_bytes[1] = (flipByte(x)<<8) | 0b0000000011111110;  // x 0 - 170
-  i2s_data.dmx_bytes[2] = (flipByte(0)<<8) | 0b0000000011111110; // x fine
+  global.i2s_data.dmx_bytes[1] = (flipByte(x)<<8) | 0b0000000011111110;  // x 0 - 170
+  global.i2s_data.dmx_bytes[2] = (flipByte(0)<<8) | 0b0000000011111110; // x fine
   
-  i2s_data.dmx_bytes[3] = (flipByte(x)<<8) | 0b0000000011111110;  // y: 0: -horz. 120: vert, 240: +horz  
-  i2s_data.dmx_bytes[4] = (flipByte(0)<<8) | 0b0000000011111110; // y fine
+  global.i2s_data.dmx_bytes[3] = (flipByte(x)<<8) | 0b0000000011111110;  // y: 0: -horz. 120: vert, 240: +horz  
+  global.i2s_data.dmx_bytes[4] = (flipByte(0)<<8) | 0b0000000011111110; // y fine
   
-  i2s_data.dmx_bytes[5] = (flipByte(30)<<8) | 0b0000000011111110; // color wheel: red
-  i2s_data.dmx_bytes[6] = (flipByte(0)<<8)   | 0b0000000011111110; // pattern 
-  i2s_data.dmx_bytes[7] = (flipByte(0)<<8)   | 0b0000000011111110; // strobe
-  i2s_data.dmx_bytes[8] = (flipByte(150)<<8) | 0b0000000011111110; // brightness
+  global.i2s_data.dmx_bytes[5] = (flipByte(30)<<8) | 0b0000000011111110; // color wheel: red
+  global.i2s_data.dmx_bytes[6] = (flipByte(0)<<8)   | 0b0000000011111110; // pattern 
+  global.i2s_data.dmx_bytes[7] = (flipByte(0)<<8)   | 0b0000000011111110; // strobe
+  global.i2s_data.dmx_bytes[8] = (flipByte(150)<<8) | 0b0000000011111110; // brightness
 }
 #endif // ENABLE_WEBINTERFACE
