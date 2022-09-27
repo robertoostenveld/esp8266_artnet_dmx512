@@ -23,9 +23,11 @@
 #define ENABLE_UART
 
 // Uncomment to send DMX data via I2S instead of UART.
-// I2S allows for better control of number of stop bits and DMX timing.
-// Moreover using DMA reduces strain of the CPU and avoids issues with background
-// activity such as handling WiFi, interrupts etc.
+// I2S allows for better control of number of stop bits and DMX timing to meet the
+// requiremeents of sloppy devices. Moreover using DMA reduces strain of the CPU and avoids 
+// issues with background activity such as handling WiFi, interrupts etc.
+// However - because of the extra timing/pauses for sloppy device, sending DMX over I2S
+// will cause throughput to drop from approx 40 packets/s to around 30.
 //#define ENABLE_I2S
 
 // Enable kind of unit test for new I2S code moving around a knowingly picky device
