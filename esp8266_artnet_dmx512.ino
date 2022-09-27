@@ -6,12 +6,15 @@
 
 */
 
-// Comment in to enable standalone mode. This means that the setup function won't 
+// Comment in to enable standalone mode. This means that the setup function won't
 // block until the device was configured to connect to a Wifi network but will start
-// to receive Artnet data right away on the access point network the WifiManager 
+// to receive Artnet data right away on the access point network the WifiManager
 // created for this purpose. You can then simply ignore the configuration attempt and
 // use the device without a local Wifi network or choose to connect one later.
+// Consider setting also a password in standalonemode, otherwise someone else might
+// configure your device to connect to a random Wifi.
 //#define ENABLE_STANDALONE
+//#define STANDALONE_PASSWORD "secretsecret"
 
 // Uncomment to send DMX data using the microcontroller's builtin UART.
 // This is the original way this sketch used to work and expects the max485 level
@@ -21,18 +24,17 @@
 
 // Uncomment to send DMX data via I2S instead of UART.
 // I2S allows for better control of number of stop bits and DMX timing.
-// Moreover using DMA reduces strain of the CPU and avoids issues with background 
+// Moreover using DMA reduces strain of the CPU and avoids issues with background
 // activity such as handling WiFi, interrupts etc.
 //#define ENABLE_I2S
 
-// Enable kind of unit test for new I2S code moving around a knowingly picky device 
+// Enable kind of unit test for new I2S code moving around a knowingly picky device
 // (china brand moving head with timing issues)
-#ifdef ENABLE_I2S
 //#define WITH_TEST_CODE
-#endif
 
-// Enable OTA (over the air programming in the Arduino GUI)
-#define ENABLE_ARDUINO_OTA
+// Enable OTA (over the air programming in the Arduino GUI, not via the web server)
+//#define ENABLE_ARDUINO_OTA
+//#define ARDUINO_OTA_PASSWORD "secret"
 
 #include <ESP8266WiFi.h>         // https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>
@@ -78,6 +80,9 @@ WiFiManager wifiManager;
 unsigned long packetCounter = 0, frameCounter = 0, last_packet_received = 0;
 float fps = 0;
 
+// Keep track if we already started OTA 
+bool arduinoOtaStarted = false;
+
 // Global universe buffer
 struct {
   uint16_t universe;
@@ -89,6 +94,7 @@ struct {
 #endif
 #ifdef ENABLE_I2S
   i2s_packet i2s_data;
+  uint16_t   i2s_length;
 #endif
 } global;
 #define WITH_WIFI
@@ -106,53 +112,77 @@ long tic_i2s = 0;
 unsigned long i2sCounter;
 #endif
 
-//this will be called for each UDP packet received
+// This will be called for each UDP packet received
 void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t * data) {
-  last_packet_received = millis();
-  
-  // print some feedback
-  Serial.print("packetCounter = ");
-  Serial.print(packetCounter++);
+
+  unsigned long now = millis();
+  if (now-last_packet_received > 1000) {
+    // print immediate feedback at start of stream
+    Serial.print("DMX stream started\n");
+  }
+  last_packet_received = now;
+
+  // print some feedback once per second
   if ((millis() - tic_fps) > 1000 && frameCounter > 100) {
+    Serial.print("packetCounter = ");
+    Serial.print(packetCounter++);
     // don't estimate the FPS too frequently
     fps = 1000 * frameCounter / (millis() - tic_fps);
     tic_fps = last_packet_received;
     frameCounter = 0;
-    Serial.print(",  FPS = ");
-    Serial.print(fps);
+    Serial.print(", FPS = ");      Serial.print(fps);
+    // print out also some diagnostic info
+    Serial.print(", length = ");   Serial.print(length);
+    Serial.print(", sequence = "); Serial.print(sequence);
+    Serial.print(", universe = "); Serial.print(universe);
+    Serial.print(", config.universe = "); Serial.print(universe);
+    Serial.println();
   }
-  Serial.println();
 
   if (universe == config.universe) {
 
 #ifdef ENABLE_I2S
-    // TODO optimize i2s such that it can send less than 512 bytes if not required
-    for (int i=0; i<DMX_CHANNELS; i++) {
-      uint16_t hi = i<length ? flipByte(data[i]) : 0;      
+    // TODO optimize i2s such that it can send less than 512 bytes if not required (length<512)
+    // we are sending I2S _frames_ (not bytes) and every frame consists of 2 words,
+    // so we must ensure an even number of DMX values where every walue is a word
+    /* do not activate before thoroughly tested with arbitrary DMX sizes
+    int even_length = 2 * (length + 1) / 2;
+    if (even_length > DMX_CHANNELS) {
+      even_length = DMX_CHANNELS;
+    }
+    int skipped_bytes = 2 * (DMX_CHANNELS - even_length); // divisible by 4
+    global.i2s_length = sizeof(global.i2s_data) - skipped_bytes;
+    Serial.printf("length=%d, even_length=%d, skipped_bytes=%d, i2s_length=%d, sizeof(i2s_data)=%d\n",
+                  length, even_length, skipped_bytes, global.i2s_length, sizeof(global.i2s_data));
+    */
+
+    for (int i = 0; i < DMX_CHANNELS; i++) {
+      uint16_t hi = i < length ? flipByte(data[i]) : 0;
       // Add stop bits and start bit of next byte unless there is no next byte.
-      uint16_t lo = i==DMX_CHANNELS-1 ? 0b0000000011111111 : 0b0000000011111110;
-      // leave null/start byte untached => +1:
-      global.i2s_data.dmx_bytes[i+1] = (hi<<8) | lo;
+      uint16_t lo = i == DMX_CHANNELS - 1 ? 0b0000000011111111 : 0b0000000011111110;
+      // leave the start-byte (index 0) untouched => +1:
+      global.i2s_data.dmx_bytes[i + 1] = (hi << 8) | lo;
     }
 #endif
 
-#ifdef ENABLE_UART    
+#ifdef ENABLE_UART
     // copy the data from the UDP packet over to the global universe buffer
     global.universe = universe;
     global.sequence = sequence;
     if (length < 512)
       global.length = length;
-    for (int i = 0; i < global.length; i++)
+    for (int i = 0; i < global.length; i++) {
       global.data[i] = data[i];
+    }
 #endif
   }
 } // onDmxpacket
 
 void setup() {
-  
+
 #ifdef ENABLE_UART
   Serial1.begin(250000, SERIAL_8N2);
-#endif 
+#endif
   Serial.begin(115200);
   while (!Serial) {
     ;
@@ -171,7 +201,8 @@ void setup() {
   for (int i = 0; i < 512; i++)
     global.data[i] = 0;
 #endif
-#ifdef ENABLE_I2S  
+#ifdef ENABLE_I2S
+  logI2SInfo();
   // Must NOT be called before Serial.begin I2S output is on RX0 pin which would
   // be reset to input mode for serial data rather than output for I2S data.
   initI2S();
@@ -194,24 +225,35 @@ void setup() {
   if (WiFi.status() != WL_CONNECTED)
     singleRed();
 
-  Serial.println("Starting WiFiManager");
-  wifiManager.resetSettings();
+  //wifiManager.resetSettings();
 #ifdef ENABLE_STANDALONE
-  Serial.println("Starting WiFiManager (non-blocking)");
+  Serial.println("Starting WiFiManager (non-blocking mode)");
   wifiManager.setConfigPortalBlocking(false);
-#else  
-  Serial.println("Starting WiFiManager (blocking)");
-#endif  
+#else
+  Serial.println("Starting WiFiManager (blocking mode)");
+#endif
   WiFi.hostname(host);
   wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
+#ifdef STANDALONE_PASSWORD
+  wifiManager.autoConnect(host, STANDALONE_PASSWORD);
+#else
   wifiManager.autoConnect(host);
+#endif  
   Serial.println("connected");
 
   if (WiFi.status() == WL_CONNECTED)
     singleGreen();
 
+#ifdef ENABLE_ARDUINO_OTA
+  initOTA();
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("Starting Arduino OTA (setup)");
+    ArduinoOTA.begin();
+    arduinoOtaStarted = true;
+  }
+#endif
 #ifdef ENABLE_WEBINTERFACE
-    initServer();
+  initServer();
 #endif
 
   // announce the hostname and web server through zeroconf
@@ -231,10 +273,10 @@ void setup() {
 
 #ifdef ENABLE_UART
   tic_uart    = 0;
-#endif    
+#endif
 #ifdef ENABLE_I2S
   tic_i2s    = 0;
-#endif  
+#endif
 
   Serial.println("setup done");
 } // setup
@@ -242,9 +284,17 @@ void setup() {
 void loop() {
   // handle those servers only when not receiving DMX data
   long now = millis();
-  if (now-last_packet_received > 1000) {
+  
+  if (now - last_packet_received > 1000) {
     wifiManager.process();
+#ifdef ENABLE_ARDUINO_OTA
+    if (WiFi.status() == WL_CONNECTED && !arduinoOtaStarted) {
+      Serial.println("Starting Arduino OTA (loop)");
+      ArduinoOTA.begin();
+      arduinoOtaStarted = true;
+    }
     ArduinoOTA.handle();
+#endif    
   }
   server.handleClient();
 
@@ -253,9 +303,9 @@ void loop() {
     delay(10);
 #ifndef ENABLE_STANDALONE
     return;
-#endif    
-  } 
-  
+#endif
+  }
+
   if ((millis() - tic_web) < 5000) {
     singleBlue();
     delay(25);
@@ -271,18 +321,18 @@ void loop() {
 
 #ifdef ENABLE_UART
       outputSerial();
-#endif      
+#endif
 
 #ifdef ENABLE_I2S
       outputI2S();
-#endif      
+#endif
     }
   }
 
-  #ifdef WITH_TEST_CODE
+#ifdef WITH_TEST_CODE
   testCode();
-  #endif
-  
+#endif
+
   //delay(1);
 } // loop
 
@@ -296,7 +346,7 @@ void outputSerial() {
   // send out the value of the selected channels (up to 512)
   for (int i = 0; i < MIN(global.length, config.channels); i++) {
     Serial1.write(global.data[i]);
-  }    
+  }
 
   uartCounter++;
   long now = millis();
@@ -306,7 +356,7 @@ void outputSerial() {
     tic_uart = now;
     uartCounter = 0;
     Serial.printf("UART: %.1f p/s\n", pps);
-  }  
+  }
 }
 
 #endif // ENABLE_UART
@@ -319,14 +369,14 @@ void initI2S() {
 
   memset(&(global.i2s_data), 0x00, sizeof(global.i2s_data));
   memset(&(global.i2s_data.mark_before_break), 0xff, sizeof(global.i2s_data.mark_before_break));
-  
+
   // 3 bits (12us) MAB. The MAB's LSB 0 acts as the start bit (low) for the null byte
   global.i2s_data.mark_after_break = (uint16_t) 0b000001110;
-  
+
   // Set LSB to 0 for every byte to act as the start bit of the following byte.
   // Sending 7 stop bits in stead of 2 will please slow/buggy hardware and act
   // as the mark time between slots.
-  for (int i=0; i<DMX_CHANNELS; i++) {
+  for (int i = 0; i < DMX_CHANNELS; i++) {
     global.i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
   }
   // Set MSB NOT to 0 for the last byte because MBB (mark for break will follow)
@@ -336,17 +386,17 @@ void initI2S() {
 
   i2s_begin();
   // 250.000 baud / 32 bits = 7812
-  i2s_set_rate(7812); 
+  i2s_set_rate(7812);
 
   // Use this to fine tune frequency: should be 125 kHz
-  //memset(&data, 0b01010101, sizeof(data));  
+  //memset(&data, 0b01010101, sizeof(data));
 }
 
-void outputI2S(void) {  
-  // From the comment in i2s.h: 
+void outputI2S(void) {
+  // From the comment in i2s.h:
   // "A frame is just a int16_t for mono, for stereo a frame is two int16_t, one for each channel."
   // Therefore we need to divide by 4 in total
-  i2s_write_buffer((int16_t*) &global.i2s_data, sizeof(global.i2s_data)/4);
+  i2s_write_buffer((int16_t*) &global.i2s_data, sizeof(global.i2s_data) / 4);
 
   i2sCounter++;
   long now = millis();
@@ -356,14 +406,14 @@ void outputI2S(void) {
     tic_i2s = now;
     i2sCounter = 0;
     Serial.printf("I2S: %.1f p/s\n", pps);
-  }  
+  }
 }
 
 // Reverse byte order because DMX expects LSB first but I2S sends MSB first.
 byte flipByte(byte c) {
-  c = ((c>>1) & 0b01010101) | ((c<<1) & 0b10101010);
-  c = ((c>>2) & 0b00110011) | ((c<<2) & 0b11001100);
-  return (c>>4) | (c<<4) ;
+  c = ((c >> 1) & 0b01010101) | ((c << 1) & 0b10101010);
+  c = ((c >> 2) & 0b00110011) | ((c << 2) & 0b11001100);
+  return (c >> 4) | (c << 4) ;
 }
 
 #endif // ENABLE_I2S
@@ -546,24 +596,74 @@ void allBlack() {
 #endif
 
 #ifdef WITH_TEST_CODE
+
 void testCode() {
   long now = millis();
-  uint8_t x = (now/60) % 240;
-  if (x>120) {
-    x=240-x;
+  uint8_t x = (now / 60) % 240;
+  if (x > 120) {
+    x = 240 - x;
   }
-  
+
   //Serial.printf("x: %d\n", x);
-  
-  global.i2s_data.dmx_bytes[1] = (flipByte(x)<<8) | 0b0000000011111110;  // x 0 - 170
-  global.i2s_data.dmx_bytes[2] = (flipByte(0)<<8) | 0b0000000011111110; // x fine
-  
-  global.i2s_data.dmx_bytes[3] = (flipByte(x)<<8) | 0b0000000011111110;  // y: 0: -horz. 120: vert, 240: +horz  
-  global.i2s_data.dmx_bytes[4] = (flipByte(0)<<8) | 0b0000000011111110; // y fine
-  
-  global.i2s_data.dmx_bytes[5] = (flipByte(30)<<8) | 0b0000000011111110; // color wheel: red
-  global.i2s_data.dmx_bytes[6] = (flipByte(0)<<8)   | 0b0000000011111110; // pattern 
-  global.i2s_data.dmx_bytes[7] = (flipByte(0)<<8)   | 0b0000000011111110; // strobe
-  global.i2s_data.dmx_bytes[8] = (flipByte(150)<<8) | 0b0000000011111110; // brightness
+#ifdef ENABLE_UART
+  global.data[1] =   x; // x 0 - 170
+  global.data[2] =   0; // x fine
+
+  global.data[3] =   x; // y: 0: -horz. 120: vert, 240: +horz
+  global.data[4] =   0; // y fine
+
+  global.data[5] =  30; // color wheel: red
+  global.data[6] =   0; // pattern
+  global.data[7] =   0; // strobe
+  global.data[8] = 150; // brightness
+#endif // ENABLE_UART
+
+#ifdef ENABLE_I2S
+  global.i2s_data.dmx_bytes[1] = (flipByte(  x) << 8) | 0b0000000011111110; // x 0 - 170
+  global.i2s_data.dmx_bytes[2] = (flipByte(  0) << 8) | 0b0000000011111110; // x fine
+
+  global.i2s_data.dmx_bytes[3] = (flipByte(  x) << 8) | 0b0000000011111110; // y: 0: -horz. 120: vert, 240: +horz
+  global.i2s_data.dmx_bytes[4] = (flipByte(  0) << 8) | 0b0000000011111110; // y fine
+
+  global.i2s_data.dmx_bytes[5] = (flipByte( 30) << 8) | 0b0000000011111110; // color wheel: red
+  global.i2s_data.dmx_bytes[6] = (flipByte(  0) << 8)   | 0b0000000011111110; // pattern
+  global.i2s_data.dmx_bytes[7] = (flipByte(  0) << 8)   | 0b0000000011111110; // strobe
+  global.i2s_data.dmx_bytes[8] = (flipByte(150) << 8) | 0b0000000011111110; // brightness
+#endif
 }
-#endif // ENABLE_WEBINTERFACE
+
+#endif // WITH_TEST_CODE
+
+#ifdef ENABLE_ARDUINO_OTA
+
+int last_ota_progress = 0;
+
+void initOTA() {
+  Serial.println("Initializing Arduino OTA");
+  ArduinoOTA.setHostname(host);
+  ArduinoOTA.setPassword(ARDUINO_OTA_PASSWORD);
+  ArduinoOTA.onStart([]() {
+    allBlack();
+    digitalWrite(LED_B, ON);
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("Error[%u]: ", error);
+    allBlack();
+    digitalWrite(LED_R, ON);
+  });
+  ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
+    analogWrite(LED_B, 4096 - (20 * millis()) % 4096);
+    if (progress != last_ota_progress) {
+      Serial.printf("OTA Progress: %u%%\n", (progress / (total / 100)));
+      last_ota_progress = progress;
+    }
+  });
+  ArduinoOTA.onEnd([]()   {
+    allBlack();
+    digitalWrite(LED_G, ON);
+    delay(500);
+    allBlack();
+  });
+  Serial.println("Arduino OTA init complete");
+}
+#endif // ENABLE_ARDUINO_OTA
