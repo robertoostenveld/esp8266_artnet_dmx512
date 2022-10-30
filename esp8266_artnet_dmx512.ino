@@ -1,20 +1,17 @@
 /*
   This sketch receives Art-Net data of one DMX universes over WiFi
-  and sends it over the serial interface to a MAX485 module.
+  and sends it to a MAX485 module as an interface between wireless
+  Art-Net and wired DMX512.
 
-  It provides an interface between wireless Art-Net and wired DMX512.
+  This firmware can either use the UART (aka Serial) interface to
+  the MAX485 module, or the I2S interface. Note that the wiring
+  depends on whether you use UART or I2S.
 
+  See https://robertoostenveld.nl/art-net-to-dmx512-with-esp8266/
+  and comments to that blog post.
+
+  See https://github.com/robertoostenveld/esp8266_artnet_dmx512
 */
-
-// Comment in to enable standalone mode. This means that the setup function won't
-// block until the device was configured to connect to a Wifi network but will start
-// to receive Artnet data right away on the access point network the WifiManager
-// created for this purpose. You can then simply ignore the configuration attempt and
-// use the device without a local Wifi network or choose to connect one later.
-// Consider setting also a password in standalonemode, otherwise someone else might
-// configure your device to connect to a random Wifi.
-//#define ENABLE_STANDALONE
-//#define STANDALONE_PASSWORD "secretsecret"
 
 // Uncomment to send DMX data using the microcontroller's builtin UART.
 // This is the original way this sketch used to work and expects the max485 level
@@ -24,7 +21,7 @@
 
 // Uncomment to send DMX data via I2S instead of UART.
 // I2S allows for better control of number of stop bits and DMX timing to meet the
-// requiremeents of sloppy devices. Moreover using DMA reduces strain of the CPU and avoids 
+// requiremeents of sloppy devices. Moreover using DMA reduces strain of the CPU and avoids
 // issues with background activity such as handling WiFi, interrupts etc.
 // However - because of the extra timing/pauses for sloppy device, sending DMX over I2S
 // will cause throughput to drop from approx 40 packets/s to around 30.
@@ -33,6 +30,16 @@
 // Enable kind of unit test for new I2S code moving around a knowingly picky device
 // (china brand moving head with timing issues)
 //#define WITH_TEST_CODE
+
+// Comment in to enable standalone mode. This means that the setup function won't
+// block until the device was configured to connect to a Wifi network but will start
+// to receive Artnet data right away on the access point network that the WifiManager
+// created for this purpose. You can then simply ignore the configuration attempt and
+// use the device without a local Wifi network or choose to connect one later.
+// Consider setting also a password in standalone mode, otherwise someone else might
+// configure your device to connect to a random Wifi.
+//#define ENABLE_STANDALONE
+//#define STANDALONE_PASSWORD "secretsecret"
 
 // Enable OTA (over the air programming in the Arduino GUI, not via the web server)
 //#define ENABLE_ARDUINO_OTA
@@ -45,9 +52,11 @@
 #include <WiFiClient.h>
 #include <ArtnetWifi.h>          // https://github.com/rstephan/ArtnetWifi
 #include <FS.h>
+
 #ifdef ENABLE_ARDUINO_OTA
 #include <ArduinoOTA.h>
 #endif
+
 #ifdef ENABLE_I2S
 #include <i2s.h>
 #include <i2s_reg.h>
@@ -82,7 +91,7 @@ WiFiManager wifiManager;
 unsigned long packetCounter = 0, frameCounter = 0, last_packet_received = 0;
 float fps = 0;
 
-// Keep track if we already started OTA 
+// Keep track whether OTA was started
 bool arduinoOtaStarted = false;
 
 // Global universe buffer
@@ -90,9 +99,8 @@ struct {
   uint16_t universe;
   uint16_t length;
   uint8_t sequence;
-  // when using I2S, channel values are stored in i2s_data
 #ifdef ENABLE_UART
-  uint8_t *data;
+  uint8_t uart_data[512];
 #endif
 #ifdef ENABLE_I2S
   i2s_packet i2s_data;
@@ -118,7 +126,7 @@ unsigned long i2sCounter;
 void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t * data) {
 
   unsigned long now = millis();
-  if (now-last_packet_received > 1000) {
+  if (now - last_packet_received > 1000) {
     // print immediate feedback at start of stream
     Serial.print("DMX stream started\n");
   }
@@ -132,29 +140,33 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
     fps = 1000 * frameCounter / (millis() - tic_fps);
     tic_fps = last_packet_received;
     frameCounter = 0;
-    Serial.print(", FPS = ");      Serial.print(fps);
+    Serial.print(", FPS = ");             Serial.print(fps);
     // print out also some diagnostic info
-    Serial.print(", length = ");   Serial.print(length);
-    Serial.print(", sequence = "); Serial.print(sequence);
-    Serial.print(", universe = "); Serial.print(universe);
+    Serial.print(", length = ");          Serial.print(length);
+    Serial.print(", sequence = ");        Serial.print(sequence);
+    Serial.print(", universe = ");        Serial.print(universe);
     Serial.print(", config.universe = "); Serial.print(universe);
     Serial.println();
   }
 
   if (universe == config.universe) {
+    // copy the data from the UDP packet
+    global.universe = universe;
+    global.sequence = sequence;
 
 #ifdef ENABLE_I2S
     // TODO optimize i2s such that it can send less than 512 bytes if not required (length<512)
     // we are sending I2S _frames_ (not bytes) and every frame consists of 2 words,
     // so we must ensure an even number of DMX values where every walue is a word
+
     /* do not activate before thoroughly tested with arbitrary DMX sizes
-    int even_length = 2 * (length + 1) / 2;
-    if (even_length > DMX_CHANNELS) {
+      int even_length = 2 * (length + 1) / 2;
+      if (even_length > DMX_CHANNELS) {
       even_length = DMX_CHANNELS;
-    }
-    int skipped_bytes = 2 * (DMX_CHANNELS - even_length); // divisible by 4
-    global.i2s_length = sizeof(global.i2s_data) - skipped_bytes;
-    Serial.printf("length=%d, even_length=%d, skipped_bytes=%d, i2s_length=%d, sizeof(i2s_data)=%d\n",
+      }
+      int skipped_bytes = 2 * (DMX_CHANNELS - even_length); // divisible by 4
+      global.i2s_length = sizeof(global.i2s_data) - skipped_bytes;
+      Serial.printf("length=%d, even_length=%d, skipped_bytes=%d, i2s_length=%d, sizeof(i2s_data)=%d\n",
                   length, even_length, skipped_bytes, global.i2s_length, sizeof(global.i2s_data));
     */
 
@@ -168,13 +180,10 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
 #endif
 
 #ifdef ENABLE_UART
-    // copy the data from the UDP packet over to the global universe buffer
-    global.universe = universe;
-    global.sequence = sequence;
-    if (length < 512)
+    if (length <= 512)
       global.length = length;
     for (int i = 0; i < global.length; i++) {
-      global.data[i] = data[i];
+      global.uart_data[i] = data[i];
     }
 #endif
   }
@@ -183,8 +192,11 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
 void setup() {
 
 #ifdef ENABLE_UART
+  // Serial1 output is for DMX signalling to the MAX485 module
   Serial1.begin(250000, SERIAL_8N2);
 #endif
+
+  // Serial0 is for debugging purposes
   Serial.begin(115200);
   while (!Serial) {
     ;
@@ -198,18 +210,20 @@ void setup() {
   global.universe = 0;
   global.sequence = 0;
   global.length = 512;
+
 #ifdef ENABLE_UART
-  global.data = (uint8_t *)malloc(512);
   for (int i = 0; i < 512; i++)
-    global.data[i] = 0;
+    global.uart_data[i] = 0;
 #endif
+
 #ifdef ENABLE_I2S
   logI2SInfo();
-  // Must NOT be called before Serial.begin I2S output is on RX0 pin which would
-  // be reset to input mode for serial data rather than output for I2S data.
+  // The initI2S() must NOT be called before Serial.begin I2S output is on RX0 pin
+  // which would be reset to input mode for serial data rather than output for I2S data.
   initI2S();
 #endif
 
+  // The SPIFFS file system contains the html and javascript code for the web interface
   SPIFFS.begin();
 
   Serial.println("Loading configuration");
@@ -228,19 +242,22 @@ void setup() {
     singleRed();
 
   //wifiManager.resetSettings();
+  
 #ifdef ENABLE_STANDALONE
   Serial.println("Starting WiFiManager (non-blocking mode)");
   wifiManager.setConfigPortalBlocking(false);
 #else
   Serial.println("Starting WiFiManager (blocking mode)");
 #endif
+
   WiFi.hostname(host);
   wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
+
 #ifdef STANDALONE_PASSWORD
   wifiManager.autoConnect(host, STANDALONE_PASSWORD);
 #else
   wifiManager.autoConnect(host);
-#endif  
+#endif
   Serial.println("connected");
 
   if (WiFi.status() == WL_CONNECTED)
@@ -254,6 +271,7 @@ void setup() {
     arduinoOtaStarted = true;
   }
 #endif
+
 #ifdef ENABLE_WEBINTERFACE
   initServer();
 #endif
@@ -284,19 +302,18 @@ void setup() {
 } // setup
 
 void loop() {
-  // handle those servers only when not receiving DMX data
+  // handle wifiManager and arduinoOTA requests only when not receiving new DMX data
   long now = millis();
-  
   if (now - last_packet_received > 1000) {
     wifiManager.process();
 #ifdef ENABLE_ARDUINO_OTA
     if (WiFi.status() == WL_CONNECTED && !arduinoOtaStarted) {
       Serial.println("Starting Arduino OTA (loop)");
       ArduinoOTA.begin();
-      arduinoOtaStarted = true;
+      arduinoOtaStarted = true;  // remember that it started
     }
     ArduinoOTA.handle();
-#endif    
+#endif
   }
   server.handleClient();
 
@@ -309,6 +326,7 @@ void loop() {
   }
 
   if ((millis() - tic_web) < 5000) {
+    // give feedback that the webinterface is active
     singleBlue();
     delay(25);
   }
@@ -347,7 +365,7 @@ void outputSerial() {
   Serial1.write(0); // Start-Byte
   // send out the value of the selected channels (up to 512)
   for (int i = 0; i < MIN(global.length, config.channels); i++) {
-    Serial1.write(global.data[i]);
+    Serial1.write(global.uart_data[i]);
   }
 
   uartCounter++;
@@ -608,16 +626,16 @@ void testCode() {
 
   //Serial.printf("x: %d\n", x);
 #ifdef ENABLE_UART
-  global.data[1] =   x; // x 0 - 170
-  global.data[2] =   0; // x fine
+  global.uart_data[1] =   x; // x 0 - 170
+  global.uart_data[2] =   0; // x fine
 
-  global.data[3] =   x; // y: 0: -horz. 120: vert, 240: +horz
-  global.data[4] =   0; // y fine
+  global.uart_data[3] =   x; // y: 0: -horz. 120: vert, 240: +horz
+  global.uart_data[4] =   0; // y fine
 
-  global.data[5] =  30; // color wheel: red
-  global.data[6] =   0; // pattern
-  global.data[7] =   0; // strobe
-  global.data[8] = 150; // brightness
+  global.uart_data[5] =  30; // color wheel: red
+  global.uart_data[6] =   0; // pattern
+  global.uart_data[7] =   0; // strobe
+  global.uart_data[8] = 150; // brightness
 #endif // ENABLE_UART
 
 #ifdef ENABLE_I2S
@@ -628,8 +646,8 @@ void testCode() {
   global.i2s_data.dmx_bytes[4] = (flipByte(  0) << 8) | 0b0000000011111110; // y fine
 
   global.i2s_data.dmx_bytes[5] = (flipByte( 30) << 8) | 0b0000000011111110; // color wheel: red
-  global.i2s_data.dmx_bytes[6] = (flipByte(  0) << 8)   | 0b0000000011111110; // pattern
-  global.i2s_data.dmx_bytes[7] = (flipByte(  0) << 8)   | 0b0000000011111110; // strobe
+  global.i2s_data.dmx_bytes[6] = (flipByte(  0) << 8) | 0b0000000011111110; // pattern
+  global.i2s_data.dmx_bytes[7] = (flipByte(  0) << 8) | 0b0000000011111110; // strobe
   global.i2s_data.dmx_bytes[8] = (flipByte(150) << 8) | 0b0000000011111110; // brightness
 #endif
 }

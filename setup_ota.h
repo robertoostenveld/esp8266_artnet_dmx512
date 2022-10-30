@@ -1,6 +1,10 @@
 #ifndef _SETUP_OTA_H_
 #define _SETUP_OTA_H_
 
+/*
+ * This is for configuring the ArtNet universe, the number of channels, etcetera.
+ */
+
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <ESP8266WebServer.h>

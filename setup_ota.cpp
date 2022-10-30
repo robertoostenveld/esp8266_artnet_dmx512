@@ -1,5 +1,9 @@
 #include "setup_ota.h"
 
+/*
+ * This is for configuring the ArtNet universe, the number of channels, etcetera.
+ */
+
 extern ESP8266WebServer server;
 extern Config config;
 extern unsigned long packetCounter;
