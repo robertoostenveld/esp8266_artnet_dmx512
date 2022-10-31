@@ -1,12 +1,13 @@
-#include "setup_ota.h"
+#include <Arduino.h>
+#include <ArduinoJson.h>
+#include <ESP8266WebServer.h>
+#include <WiFiUdp.h>
+#include <FS.h>
 
-/*
- * This is for configuring the ArtNet universe, the number of channels, etcetera.
- */
+#include "webinterface.h"
 
 extern ESP8266WebServer server;
 extern Config config;
-extern unsigned long packetCounter;
 
 /***************************************************************************/
 
@@ -31,7 +32,6 @@ static String getContentType(const String& path) {
 }
 
 /***************************************************************************/
-
 
 bool initialConfig() {
   config.universe = 1;
@@ -176,7 +176,7 @@ void handleRedirect(const char * filename) {
 }
 
 bool handleStaticFile(String path) {
-  Serial.println("handleStaticFile");
+  Serial.println("handleStaticFile " + path);
   String contentType = getContentType(path);            // Get the MIME type
   if (SPIFFS.exists(path)) {                            // If the file exists
     File file = SPIFFS.open(path, "r");                 // Open it

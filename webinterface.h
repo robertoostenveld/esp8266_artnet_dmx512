@@ -1,15 +1,5 @@
-#ifndef _SETUP_OTA_H_
-#define _SETUP_OTA_H_
-
-/*
- * This is for configuring the ArtNet universe, the number of channels, etcetera.
- */
-
-#include <Arduino.h>
-#include <ArduinoJson.h>
-#include <ESP8266WebServer.h>
-#include <WiFiUdp.h>
-#include <FS.h>
+#ifndef _WEBINTERFACE_H_
+#define _WEBINTERFACE_H_
 
 #define JSON_TO_CONFIG(x, y)   { if (root.containsKey(y)) { config.x = root[y]; } }
 #define CONFIG_TO_JSON(x, y)   { root[y] = config.x; }
@@ -34,9 +24,9 @@ bool handleStaticFile(const char *);
 void handleJSON();
 
 struct Config {
-  int universe;
-  int channels;
-  int delay;
+  unsigned int universe;
+  unsigned int channels;
+  unsigned int delay;
 };
 
-#endif // _SETUP_OTA_H_
+#endif // _WEBINTERFACE_H_
