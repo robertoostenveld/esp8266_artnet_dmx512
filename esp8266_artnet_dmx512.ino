@@ -33,7 +33,7 @@
 // Uncomment to send DMX data using the microcontroller's builtin UART.
 // This is the original way this sketch used to work and expects the max485 level
 // shifter to be connected to the pin that corresponds to Serial1.
-// On a Wemos D1 this is pin D4 aka RX1.
+// On a Wemos D1 this is pin D4 aka TX1.
 #define ENABLE_UART
 
 // Uncomment to send DMX data via I2S instead of UART.

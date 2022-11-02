@@ -14,7 +14,7 @@ See http://robertoostenveld.nl/art-net-to-dmx512-with-esp8266/ for more details 
 
 DMX is a serial protocol and - except for different voltage levels - very similar to RS232. Therefore it is obvious to use the built-in UART (Universal Asynchronous Receiver/Transmitter)
 of the micro controller to send the DMX frames. This is the original way this sketch used to work and expects the max485 level shifter to be connected to the pin that corresponds to Serial1.
-On a Wemos D1 this is pin D4 aka RX1. In order to use UART mode, comment in the ENABLE_UART definition.
+On a Wemos D1 this is pin D4 aka TX1. In order to use UART mode, comment in the ENABLE_UART definition.
 
 ## I2S
 
