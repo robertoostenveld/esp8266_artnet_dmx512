@@ -34,7 +34,7 @@ You can just as well use two max485 circuits and wire one to TX1/D4 and the seco
 
 Because of the number of extra stop bits, I2S mode will cause the throughput to drop from 40 frames/second to approx. 30 f/s which still should be acceptable under normal circumstances.
 
-Fore I2S mode, there is another conditional define (I2S_SUPER_SAFE) which not only adds extra stop bits but also extends the MBB (mark before break) and SFB (space before break)
+For I2S mode, there is another conditional define (I2S_SUPER_SAFE) which not only adds extra stop bits but also extends the MBB (mark before break) and SFB (space before break)
 to the values observed with the oscilloscope. Try this if you encounter problems with a fixture although you are already using I2S mode.
 
 
