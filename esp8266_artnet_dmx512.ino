@@ -90,7 +90,7 @@
 
 #ifdef ENABLE_I2S
 #include <I2S.h>
-#include <I2S_reg.h>
+#include <i2s_reg.h>
 #define I2S_PIN 3
 #define DMX_CHANNELS 512
 
