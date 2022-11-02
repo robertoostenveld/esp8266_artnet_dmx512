@@ -26,6 +26,10 @@ It seems like the manufacturers of such panels are aware of the fact that there 
 Because the buil-in UART does not allow to send more than 2 stop bits, the I2S mode (https://en.wikipedia.org/wiki/I%C2%B2S) has been implemented that supports very fine-grained control over
 the timning of every single bit. Unfortunately, the I2S data output pin is hardwired to GPIO3 (=RX0) on an ESP8266 which means that the max485 level shifter needs to be attached to this pin.
 Using a double throw switch allows to swicth between those two pins as depicted in the wiring schematic below.
+
+*Warning*: When uploading your this sketch to your ESP8266, make sure to disconnect any fixtures from the XLR connctor because uploading means sending data to RX0 and will cause your
+fixtures to do random things. This might not be a big problem with simple lamps but might cause damage when using motion devices.
+
 You can just as well use two max485 circuits and wire one to RX1/D4 and the second one to RX0 and comment in both modes (ENABLE_UART and ENABLE_I2S)
 
 Because of the number of extra stop bits, I2S mode will cause the throughput to drop from 40 frames/second to approx. 30 f/s which still should be acceptable under normal circumstances.
