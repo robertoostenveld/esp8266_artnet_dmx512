@@ -27,7 +27,7 @@ Because the buil-in UART does not allow to send more than 2 stop bits, the I2S m
 the timning of every single bit. Unfortunately, the I2S data output pin is hardwired to GPIO3 (=RX0) on an ESP8266 which means that the max485 level shifter needs to be attached to this pin.
 Using a double throw switch allows to swicth between those two pins as depicted in the wiring schematic below.
 
-*Warning*: When uploading your this sketch to your ESP8266, make sure to disconnect any fixtures from the XLR connctor because uploading means sending data to RX0 and will cause your
+*Warning*: When uploading your this sketch to your ESP8266, make sure to disconnect any fixtures from the XLR connector because this means sending data to RX0 and will cause your
 fixtures to do random things. This might not be a big problem with simple lamps but might cause damage when using motion devices.
 
 You can just as well use two max485 circuits and wire one to RX1/D4 and the second one to RX0 and comment in both modes (ENABLE_UART and ENABLE_I2S)
