@@ -103,6 +103,8 @@
 // stop bits. Apparently to please some picky devices out there that cannot handle
 // DMX data quickly enough.
 // Using these parameters results in a throughput of approx. 29.7 packets/s (with 512 DMX channels)
+// which is pretty close to the theoretical maximum:
+// (640+180+513*16*4) us/f = 33.780 ms/f ; 1 s / 0.03378 s = 29.72 f/s
 typedef struct {
   uint16_t mark_before_break[10]; // 10 * 16 bits * 4 us -> 640 us
   uint16_t space_for_break[2]; // 2 * 16 bits * 4 us -> 128 us
@@ -114,7 +116,8 @@ typedef struct {
 
 #else
 // This configuration sets way shorter MBB and SFB but still adds lots of extra stop bits.
-// At least for my devices this still works and increases thrughput slightly to 30.3  packets/s.
+// At least for my devices this still works and increases throughput slightly to 30.3  packets/s.
+// 1000000 us / (64+116+513*16*4) us/f = 30.3 f/s 
 typedef struct {
   uint16_t mark_before_break[1]; // 1 * 16 bits * 4 us -> 64 us
   uint16_t space_for_break[1]; // 1 * 16 bits * 4 us -> 64 us
