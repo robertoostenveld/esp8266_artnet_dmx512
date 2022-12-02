@@ -118,7 +118,7 @@ This could result e.g. in perceptible hiccups for something that moves.
  
 ## DMA / I2S
  
-The I2S mode in contrast allows control of every single bit of the signal
+In contrast to UART, the I2S mode allows control of every single bit of the signal
 as well as a very precise definition of the frequency. I2S is normally used
 to send audio data to an external DAC (digital-analog converter).
 
@@ -129,26 +129,38 @@ signal.
 While we would like to create a buffer with a valid DMX signal once,
 instruct DMA to transfer it at a specific data rate to the I2S GPIO of the
 ESP8266 continuously, the Arduino code takes explicit measures to prevent 
-DMX from looping over the data.
+DMA from looping over the data.
+It maintains a ring chain of buffers, making sure that the "oldest" is the 
+one that gets fed, eventually even zero'ing a buffer that was ubject to a
+buffer underrun.
+
 This means that we would need to assert that we feed the DMX data over and
-over again to keep this buffer filled.
+over again to keep this buffer filled. In the first implementation of I2S 
+mode this was exactly the case and it felt wrong right away but I had no 
+clue how the I2S thing works and no documentation to change this.
 
-The I2S/DMA setup in i2s_dmx.{h|cpp} does exactly the opposite: When passed a
-pre-allocated buffer to i2s_dmx_begin(), it will initialize DMA such that it
-will continuously transfer this buffer at a rate that was set with
-i2s_set_rate() before.
+Starting with the I2S source files in the Arduino/ESP8266 project,
+I ended up with what you will find in i2s_dmx.{h|cpp}.
+The does exactly the opposite of the original code: 
+When passed a pre-allocated buffer to i2s_dmx_begin(), it will initialize 
+DMA such that it will continuously transfer this buffer at a rate that 
+was set with i2s_set_rate() before.
+I did not want to change port anything that already exists. For this reason
+the original I2S includes are still necessary e.g. for setting the rate.
 
-When Artnet data is received later, the only thing the code needs to do is
-to update the DMX values within this buffer at the corresponding bit
-positions. There is no need to feed/send this data or to inform the DMA
+When Artnet data is received later, the only thing the code (loop() method) 
+needs to do is to update the DMX values within this buffer at the 
+corresponding bit positions. 
+There is no need to feed/send this data or to inform the DMA
 subsystem about changes. Everything that was updated in the buffer will be
-sent next time, the DMA rushes over the changed bytes.
+sent next time the DMA rushes over the changed bytes.
 
 There is a potential risk with doing so: There is no guarantee when a byte
 that is subject to a change will be transferred next time. 
 
-This should not be a big deal in general because it means that a specific
-update will go live like 25ms earlier or later.
+This should not be a big deal in general because it only means that a specific
+update will go live like 25ms earlier or later - negligible.
+
 However, a single channel value might get split up into some more
 significant bits and some less significant ones. When not written in a 
 single transactional that might cause unwanted and perceptible effects e.g.
