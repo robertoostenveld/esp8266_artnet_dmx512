@@ -91,43 +91,19 @@
 #ifdef ENABLE_I2S
 #include <I2S.h>
 #include <i2s_reg.h>
-#define I2S_PIN 3
-#define DMX_CHANNELS 512
+#include "i2s_dmx.h"
+#include "DmxArray.h"
+#define DMX_CHANNELS 256
 
-// See comments below
-//#define I2S_SUPER_SAFE
+// 256 channels, byte aligned, 40.1 packets/s with generous timing for slow fixtures:
+DmxArray dmxArray;
 
-#ifdef I2S_SUPER_SAFE
-// Below timings are based on measures taken with a commercial DMX512 controller.
-// They differ substentially from the offcial DMX standard ... breaks are longer, more
-// stop bits. Apparently to please some picky devices out there that cannot handle
-// DMX data quickly enough.
-// Using these parameters results in a throughput of approx. 29.7 packets/s (with 512 DMX channels)
-// which is pretty close to the theoretical maximum:
-// (640+180+513*16*4) us/f = 33.780 ms/f ; 1 s / 0.03378 s = 29.72 f/s
-typedef struct {
-  uint16_t mark_before_break[10]; // 10 * 16 bits * 4 us -> 640 us
-  uint16_t space_for_break[2]; // 2 * 16 bits * 4 us -> 128 us
-  uint16_t mark_after_break; // 13 MSB low bits * 4 us adds 52 us to space_for_break -> 180 us
-  // each "byte" (actually a word) consists of:
-  // 8 bits payload + 7 stop bits (high) + 1 start (low) for the next byte
-  uint16_t dmx_bytes[DMX_CHANNELS + 1];
-} i2s_packet;
-
-#else
-// This configuration sets way shorter MBB and SFB but still adds lots of extra stop bits.
-// At least for my devices this still works and increases throughput slightly to 30.3  packets/s.
-// 1000000 us / (64+116+513*16*4) us/f = 30.3 f/s 
-typedef struct {
-  uint16_t mark_before_break[1]; // 1 * 16 bits * 4 us -> 64 us
-  uint16_t space_for_break[1]; // 1 * 16 bits * 4 us -> 64 us
-  uint16_t mark_after_break; // 13 MSB low bits * 4 us adds 52 us to space_for_break -> 116 us
-  // each "byte" (actually a word) consists of:
-  // 8 bits payload + 7 stop bits (high) + 1 start (low) for the next byte
-  uint16_t dmx_bytes[DMX_CHANNELS + 1];
-} i2s_packet;
-#endif // I2S_SUPER_SAFE
-
+/* To set your own timing parameters use this constructor:
+DmxArray(int numChannels, int mbbBits, int sfbBits, int mabBits, int stopBits);
+e.g. 
+DmxArray(512, 37, 12, 3, 3); // 40.3 p/s, NOT byte aligned
+DmxArray(512, 25, 20, 3, 7); // 30.3 p/s, byte aligned
+*/
 #endif // ENABLE_I2S
 
 /*********************************************************************************/
@@ -153,10 +129,6 @@ struct  {
 #ifdef ENABLE_UART
   uint8_t uart_data[512];
 #endif
-#ifdef ENABLE_I2S
-  i2s_packet i2s_data;
-  uint16_t i2s_length;
-#endif
 } global;
 
 #ifdef ENABLE_ARDUINO_OTA
@@ -169,11 +141,6 @@ unsigned int last_ota_progress = 0;
 #ifdef ENABLE_UART
 long tic_uart = 0;
 unsigned long uartCounter;
-#endif
-
-#ifdef ENABLE_I2S
-long tic_i2s = 0;
-unsigned long i2sCounter;
 #endif
 
 /*********************************************************************************/
@@ -210,27 +177,9 @@ void onDmxPacket(uint16_t universe, uint16_t length, uint8_t sequence, uint8_t *
     global.sequence = sequence;
 
 #ifdef ENABLE_I2S
-    // TODO optimize i2s such that it can send less than 512 bytes if not required (length<512)
-    // we are sending I2S _frames_ (not bytes) and every frame consists of 2 words,
-    // so we must ensure an even number of DMX values where every walue is a word
-
-    /* do not activate before thoroughly tested with arbitrary DMX sizes
-       int even_length = 2 * (length + 1) / 2;
-       if (even_length > DMX_CHANNELS) {
-       even_length = DMX_CHANNELS;
-       }
-       int skipped_bytes = 2 * (DMX_CHANNELS - even_length); // divisible by 4
-       global.i2s_length = sizeof(global.i2s_data) - skipped_bytes;
-       Serial.printf("length=%d, even_length=%d, skipped_bytes=%d, i2s_length=%d, sizeof(i2s_data)=%d\n",
-                  length, even_length, skipped_bytes, global.i2s_length, sizeof(global.i2s_data));
-    */
-
-    for (int i = 0; i < DMX_CHANNELS; i++) {
-      uint16_t hi = i < length ? flipByte(data[i]) : 0;
-      // Add stop bits and start bit of next byte unless there is no next byte.
-      uint16_t lo = i == DMX_CHANNELS - 1 ? 0b0000000011111111 : 0b0000000011111110;
-      // leave the start-byte (index 0) untouched => +1:
-      global.i2s_data.dmx_bytes[i + 1] = (hi << 8) | lo;
+    int channels = MIN(global.length, dmxArray.size());
+    for (int i = 0; i < channels; i++) {
+      dmxArray.setChannel(i+1, data[i]);
     }
 #endif
 
@@ -270,41 +219,6 @@ void setup() {
 #ifdef ENABLE_UART
   for (int i = 0; i < 512; i++)
     global.uart_data[i] = 0;
-#endif
-
-#ifdef ENABLE_I2S
-#ifdef I2S_SUPER_SAFE
-  Serial.println("Using super safe I2S timing");
-#else
-  Serial.println("Using normal I2S timing");
-#endif
-  // This must NOT be called before Serial.begin I2S output is on RX0 pin
-  // which would be reset to input mode for serial data rather than output for I2S data.
-
-  pinMode(I2S_PIN, OUTPUT); // Override default Serial initiation
-  digitalWrite(I2S_PIN, 1); // Set pin high
-
-  memset(&(global.i2s_data), 0x00, sizeof(global.i2s_data));
-  memset(&(global.i2s_data.mark_before_break), 0xff, sizeof(global.i2s_data.mark_before_break));
-
-  // 3 bits (12us) MAB. The MAB's LSB 0 acts as the start bit (low) for the null byte
-  global.i2s_data.mark_after_break = (uint16_t) 0b000001110;
-
-  // Set LSB to 0 for every byte to act as the start bit of the following byte.
-  // Sending 7 stop bits in stead of 2 will please slow/buggy hardware and act
-  // as the mark time between slots.
-  for (int i = 0; i < DMX_CHANNELS; i++) {
-    global.i2s_data.dmx_bytes[i] = (uint16_t) 0b0000000011111110;
-  }
-  // Set MSB NOT to 0 for the last byte because MBB (mark for break will follow)
-  global.i2s_data.dmx_bytes[DMX_CHANNELS] = (uint16_t) 0b0000000011111111;
-
-  i2s_begin();
-  // 250.000 baud / 32 bits = 7812
-  i2s_set_rate(7812);
-
-  // Use this to fine tune frequency: should be 125 kHz
-  //memset(&data, 0b01010101, sizeof(data));
 #endif
 
   // The SPIFFS file system contains the html and javascript code for the web interface
@@ -511,7 +425,25 @@ void setup() {
 #endif
 
 #ifdef ENABLE_I2S
-  tic_i2s    = 0;
+  byte * data = (byte*) dmxArray.getData();
+  unsigned int length = dmxArray.size();
+  unsigned int padding = dmxArray.getPaddingBits();
+  if (length>1023) {    
+    // Maximum DMA transfer length is 2^12 (32 bit) frames
+    // 1024 would result in rollover, therefore limitting to 1023.
+    // Reduce your timing parameters if you get this warning.
+    Serial.printf("I2S warning: limiting data %d -> 1023\n", length);
+    length = 1023;
+  }
+    
+  Serial.printf("I2S length:  %d bytes\n", length);
+  Serial.printf("I2S padding: %d bits\n", padding);
+
+  i2s_set_rate(7812); // 7812 Hz * 32 bits = 249984 bits/s = 99.993 % * 250000
+  float rate = i2s_get_real_rate();
+  Serial.printf("I2S real (frame) rate: %.2f Hz\n", rate); // reported as 7812.50
+  Serial.printf("I2S real (bit)   rate: %.2f baud\n", 32*rate); // 250 kBaus
+  i2s_dmx_begin(data, length);
 #endif
 
   Serial.println("Setup done");
@@ -594,21 +526,6 @@ void loop() {
       }
 #endif
 
-#ifdef ENABLE_I2S
-      // From the comment in I2S.h:
-      // "A frame is just a int16_t for mono, for stereo a frame is two int16_t, one for each channel."
-      // Therefore we need to divide by 4 in total
-      i2s_write_buffer((int16_t*) &global.i2s_data, sizeof(global.i2s_data) / 4);
-
-      i2sCounter++;
-      if ((now - tic_i2s) > 1000 && i2sCounter > 100) {
-        // don't estimate the FPS too frequently
-        float pps = (1000.0 * i2sCounter) / (now - tic_i2s);
-        tic_i2s = now;
-        i2sCounter = 0;
-        Serial.printf("I2S: %.1f p/s\n", pps);
-      }
-#endif
     }
   }
 

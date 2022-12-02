@@ -25,7 +25,7 @@ class DmxArray : public BitArray {
 
   public:
   
-     const static int DEFAULT_DMX_CHANNELS = 512;
+     const static int DEFAULT_DMX_CHANNELS = 256;
 
     /* 
      * Number of start bits or payload is fixed for DMX. 
@@ -40,11 +40,15 @@ class DmxArray : public BitArray {
      * Note that value is the number of bits, NOT the time. 
      * Every DMX bit is exactly 4 micro seconds as DMX does not allow any other 
      * speed than 250 k bits/s. (10^6 us / 250 kBaud = 4 us)
+     * These are the recommended values for 256 channels, because they represent
+     * a good tradeoff between throughput, byte alignment and channels.
+     * The effective throughput is 40.1 packets/s and matches therefore the 
+     * default rate in UART mode.
      */
-    const static int MBB_BITS     = 16;
-    const static int SFB_BITS     = 13;
+    const static int MBB_BITS     = 40;
+    const static int SFB_BITS     = 28;
     const static int MAB_BITS     =  3; // 3*4 us = 12 us
-    const static int STOP_BITS    =  7;
+    const static int STOP_BITS    = 15;
 
     // Init with default values (see above).
     DmxArray();
