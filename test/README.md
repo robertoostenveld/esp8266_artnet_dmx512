@@ -170,4 +170,32 @@ Therefore the default timing parameters have been chosen such that a single
 DMX channel value will always be aligned at 8-bit boundaries, asserting that
 there no carry will occur.
 
+## Performance impact
+
+Although the calculation in the class BitArray may look demanding and time
+consuming, at the end of the day they consist of logical or mathematical
+that can be considered a microcontroller's daily business.
+
+In fact, when trying to set all channels in a 512 channel DMX sigal in a 
+loop like 10.000 times or so, this results in an overall impact on the execution
+time of loop() of 1 or 2 milli seconds.
+
+As the loop method contains code anyway to prevent from too frequent excution 
+of the code that sends UART data, this is no problem at all.
+In contrast to the former implementation the I2S signal will no longer affect
+the packet rate of data sent via UART in any way.
+
+Indeed, the two frame rates are completely independent of each other because
+I2S is mainly controlled by your choice of the aforementioned timing parameters
+while UART rate is controller by Config.delay.
+
+
+
+
+
+
+
+
+
+
 
