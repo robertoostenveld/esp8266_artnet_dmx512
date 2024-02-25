@@ -1,9 +1,3 @@
-#include <Arduino.h>
-#include <ArduinoJson.h>
-#include <ESP8266WebServer.h>
-#include <WiFiUdp.h>
-#include <FS.h>
-
 #include "webinterface.h"
 
 extern ESP8266WebServer server;
@@ -67,9 +61,9 @@ bool loadConfig() {
     return false;
   }
 
-  JSON_TO_CONFIG(universe, "universe");
-  JSON_TO_CONFIG(channels, "channels");
-  JSON_TO_CONFIG(delay, "delay");
+  N_JSON_TO_CONFIG(universe, "universe");
+  N_JSON_TO_CONFIG(channels, "channels");
+  N_JSON_TO_CONFIG(delay, "delay");
 
   return true;
 }
@@ -78,9 +72,9 @@ bool saveConfig() {
   Serial.println("saveConfig");
   DynamicJsonDocument root(300);
 
-  CONFIG_TO_JSON(universe, "universe");
-  CONFIG_TO_JSON(channels, "channels");
-  CONFIG_TO_JSON(delay, "delay");
+  N_CONFIG_TO_JSON(universe, "universe");
+  N_CONFIG_TO_JSON(channels, "channels");
+  N_CONFIG_TO_JSON(delay, "delay");
 
   File configFile = SPIFFS.open("/config.json", "w");
   if (!configFile) {
@@ -216,16 +210,16 @@ void handleJSON() {
       handleStaticFile("/reload_failure.html");
       return;
     }
-    JSON_TO_CONFIG(universe, "universe");
-    JSON_TO_CONFIG(channels, "channels");
-    JSON_TO_CONFIG(delay, "delay");
+    N_JSON_TO_CONFIG(universe, "universe");
+    N_JSON_TO_CONFIG(channels, "channels");
+    N_JSON_TO_CONFIG(delay, "delay");
     handleStaticFile("/reload_success.html");
   }
   else {
     // parse it as key1=val1&key2=val2&key3=val3
-    KEYVAL_TO_CONFIG(universe, "universe");
-    KEYVAL_TO_CONFIG(channels, "channels");
-    KEYVAL_TO_CONFIG(delay, "delay");
+    N_KEYVAL_TO_CONFIG(universe, "universe");
+    N_KEYVAL_TO_CONFIG(channels, "channels");
+    N_KEYVAL_TO_CONFIG(delay, "delay");
     handleStaticFile("/reload_success.html");
   }
   saveConfig();

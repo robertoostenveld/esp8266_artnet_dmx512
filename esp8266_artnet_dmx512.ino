@@ -13,14 +13,13 @@
    See https://github.com/robertoostenveld/esp8266_artnet_dmx512
 */
 
+#include <Arduino.h>
 #include <ESP8266WiFi.h>         // https://github.com/esp8266/Arduino
 #include <ESP8266WebServer.h>
 #include <ESP8266mDNS.h>
 #include <WiFiManager.h>         // https://github.com/tzapu/WiFiManager
-#include <WiFiClient.h>
 #include <ArtnetWifi.h>          // https://github.com/rstephan/ArtnetWifi
 #include <ArduinoJson.h>
-#include <FS.h>
 
 #include "rgb_led.h"
 #include "webinterface.h"
@@ -464,9 +463,9 @@ void setup() {
   server.on("/json", HTTP_GET, [] {
     tic_web = millis();
     DynamicJsonDocument root(300);
-    CONFIG_TO_JSON(universe, "universe");
-    CONFIG_TO_JSON(channels, "channels");
-    CONFIG_TO_JSON(delay, "delay");
+    N_CONFIG_TO_JSON(universe, "universe");
+    N_CONFIG_TO_JSON(channels, "channels");
+    N_CONFIG_TO_JSON(delay, "delay");
     root["version"] = version;
     root["uptime"]  = long(millis() / 1000);
     root["packets"] = packetCounter;

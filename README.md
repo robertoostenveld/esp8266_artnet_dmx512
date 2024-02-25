@@ -20,7 +20,7 @@ On a Wemos D1 this is pin D4 aka TX1. In order to use UART mode, comment in the 
 
 However, the built-in UART provides only very limited control over e.g. number of stop bits, breaks etc. That may become a problem when you want to control devices with kind of "sloppy" firmware. When trying to control two cheap, china made moving heads, I found that they somehow reacted to the signal but showed lots of jitter and random moves, random color changes and so on.
 When connected to a commercial, manual DMX512 control panel, they worked flawlessly. An analysis with an oscilloscope showed a significant difference between the signal and the offical DMX
-standard, most obviously in the number of stop bits. The DMX standard defines 2 stop bits whereas the commercial panel sent approx. 11 bits. 
+standard, most obviously in the number of stop bits. The DMX standard defines 2 stop bits whereas the commercial panel sent approx. 11 bits.
 It seems like the manufacturers of such panels are aware of the fact that there are devices which apparently need more time between two DMX channel values to process the data received.
 
 Because the buil-in UART does not allow to send more than 2 stop bits, the I2S mode (https://en.wikipedia.org/wiki/I%C2%B2S) has been implemented that supports very fine-grained control over
@@ -88,6 +88,12 @@ Consider setting also a password in standalone mode, otherwise someone else migh
 - connect the green leg of the LED over the 220 Ohm resistor to GPIO05/D1
 - connect the red   leg of the LED over the 220 Ohm resistor to GPIO04/D2
 
-# SPIFFS for static files
+## SPIFFS for static files
 
-Please note that you should not only write the firmware to the ESP8266 module, but also the static content for the web interface. The html, css and javascript files located in the data directory should be written to the SPIFS filesystem on the ESP8266. See for example http://esp8266.github.io/Arduino/versions/2.0.0/doc/filesystem.html and https://www.instructables.com/id/Using-ESP8266-SPIFFS for instructions. You will get a `file not found` error if the firmware cannot access the data files.
+You should not only write the firmware to the ESP8266 module, but also the static content for the web interface. The html, css and javascript files located in the data directory should be written to the SPIFS filesystem on the ESP8266. See for example http://esp8266.github.io/Arduino/versions/2.0.0/doc/filesystem.html and https://www.instructables.com/id/Using-ESP8266-SPIFFS for instructions.
+
+You will get a "file not found" error if the firmware cannot access the data files.
+
+## Arduino ESP8266 filesystem uploader
+
+This Arduino sketch includes a `data` directory with a number of files that should be uploaded to the ESP8266 using the [SPIFFS filesystem uploader](https://github.com/esp8266/arduino-esp8266fs-plugin) tool. At the moment (Feb 2024) the Arduino 2.x IDE does *not* support the SPIFFS filesystem uploader plugin. You have to use the Arduino 1.8.x IDE (recommended), or the command line utilities for uploading the data.
