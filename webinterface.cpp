@@ -28,6 +28,8 @@ static String getContentType(const String& path) {
 /***************************************************************************/
 
 bool initialConfig() {
+  Serial.println("initialConfig");
+  
   config.universe = 1;
   config.channels = 512;
   config.delay = 25;
@@ -89,7 +91,26 @@ bool saveConfig() {
   }
 }
 
-/***************************************************************************/
+void printRequest() {
+  String message = "HTTP Request\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nHeaders: ";
+  message += server.headers();
+  message += "\n";
+  for (uint8_t i = 0; i < server.headers(); i++ ) {
+    message += " " + server.headerName(i) + ": " + server.header(i) + "\n";
+  }
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+  for (uint8_t i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+  Serial.println(message);
+}
 
 void handleUpdate1() {
   server.sendHeader("Connection", "close");
@@ -157,16 +178,18 @@ void handleNotFound() {
   }
 }
 
-void handleRedirect(String filename) {
-  char buf[64];
-  filename.toCharArray(buf, 64);
-  handleRedirect(filename);
+void handleRedirect(const char * filename) {
+  handleRedirect((String)filename);
 }
 
-void handleRedirect(const char * filename) {
-  Serial.println("handleRedirect");
-  server.sendHeader("Location", String(filename), true);
+void handleRedirect(String filename) {
+  Serial.println("handleRedirect: " + filename);
+  server.sendHeader("Location", filename, true);
   server.send(302, "text/plain", "");
+}
+
+bool handleStaticFile(const char * path) {
+  return handleStaticFile((String)path);
 }
 
 bool handleStaticFile(String path) {
@@ -182,28 +205,21 @@ bool handleStaticFile(String path) {
   return false;                                         // If the file doesn't exist, return false
 }
 
-bool handleStaticFile(const char * path) {
-  return handleStaticFile((String)path);
-}
-
 void handleJSON() {
-  Serial.println("handleJSON");
-  String message = "HTTP Request\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-  Serial.println(message);
-
   // this gets called in response to either a PUT or a POST
-  if (server.args() == 1 && server.hasArg("plain")) {
-    // parse it as JSON object
+  Serial.println("handleJSON");
+  printRequest();
+
+  if (server.hasArg("universe") || server.hasArg("channels") || server.hasArg("delay")) {
+    // the body is key1=val1&key2=val2&key3=val3 and the ESP8266Webserver has already parsed it
+    N_KEYVAL_TO_CONFIG(universe, "universe");
+    N_KEYVAL_TO_CONFIG(channels, "channels");
+    N_KEYVAL_TO_CONFIG(delay, "delay");
+
+    handleStaticFile("/reload_success.html");
+  }
+  else if (server.hasArg("plain")) {
+    // parse the body as JSON object
     DynamicJsonDocument root(300);
     DeserializationError error = deserializeJson(root, server.arg("plain"));
     if (error) {
@@ -213,13 +229,7 @@ void handleJSON() {
     N_JSON_TO_CONFIG(universe, "universe");
     N_JSON_TO_CONFIG(channels, "channels");
     N_JSON_TO_CONFIG(delay, "delay");
-    handleStaticFile("/reload_success.html");
-  }
-  else {
-    // parse it as key1=val1&key2=val2&key3=val3
-    N_KEYVAL_TO_CONFIG(universe, "universe");
-    N_KEYVAL_TO_CONFIG(channels, "channels");
-    N_KEYVAL_TO_CONFIG(delay, "delay");
+
     handleStaticFile("/reload_success.html");
   }
   saveConfig();
