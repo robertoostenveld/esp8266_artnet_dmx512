@@ -306,9 +306,6 @@ void setup() {
   // The SPIFFS file system contains the html and javascript code for the web interface
   SPIFFS.begin();
 
-  Serial.println("Loading configuration");
-  initialConfig();
-
   if (loadConfig()) {
     ledYellow();
     delay(1000);
@@ -318,10 +315,13 @@ void setup() {
     delay(1000);
   }
 
+  WiFiManager wifiManager;
+  wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
+  wifiManager.autoConnect(host);
+  Serial.println("connected");
+
   if (WiFi.status() != WL_CONNECTED)
     ledRed();
-
-  //wifiManager.resetSettings();
 
 #ifdef ENABLE_STANDALONE
   Serial.println("Starting WiFiManager (non-blocking mode)");
@@ -392,13 +392,10 @@ void setup() {
     tic_web = millis();
     Serial.println("handleDefaults");
     handleStaticFile("/reload_success.html");
-    delay(2000);
-    ledRed();
-    initialConfig();
+    defaultConfig();
     saveConfig();
-    WiFiManager wifiManager;
-    wifiManager.resetSettings();
-    WiFi.hostname(host);
+    server.close();
+    server.stop();
     ESP.restart();
   });
 
@@ -406,22 +403,29 @@ void setup() {
     tic_web = millis();
     Serial.println("handleReconnect");
     handleStaticFile("/reload_success.html");
-    delay(2000);
     ledRed();
+    server.close();
+    server.stop();
+    delay(5000);
     WiFiManager wifiManager;
+    wifiManager.resetSettings();
     wifiManager.setAPStaticIPConfig(IPAddress(192, 168, 1, 1), IPAddress(192, 168, 1, 1), IPAddress(255, 255, 255, 0));
     wifiManager.startConfigPortal(host);
     Serial.println("connected");
+    server.begin();
     if (WiFi.status() == WL_CONNECTED)
       ledGreen();
   });
 
-  server.on("/reset", HTTP_GET, []() {
+  server.on("/restart", HTTP_GET, []() {
     tic_web = millis();
-    Serial.println("handleReset");
+    Serial.println("handleRestart");
     handleStaticFile("/reload_success.html");
-    delay(2000);
     ledRed();
+    server.close();
+    server.stop();
+    SPIFFS.end();
+    delay(5000);
     ESP.restart();
   });
 
