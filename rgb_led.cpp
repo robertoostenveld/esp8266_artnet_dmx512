@@ -9,7 +9,7 @@ void ledInit() {
 #ifdef COMMON_ANODE
   #define LED_ON  LOW
   #define LED_OFF HIGH
-#else 
+#else
   #define LED_ON  HIGH
   #define LED_OFF LOW
 #endif
@@ -54,4 +54,10 @@ void ledBlack() {
   digitalWrite(LED_R, LED_OFF);
   digitalWrite(LED_G, LED_OFF);
   digitalWrite(LED_B, LED_OFF);
+}
+
+void ledWhite() {
+  digitalWrite(LED_R, LED_ON);
+  digitalWrite(LED_G, LED_ON);
+  digitalWrite(LED_B, LED_ON);
 }
