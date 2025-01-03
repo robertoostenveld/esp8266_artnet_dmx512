@@ -131,7 +131,6 @@ typedef struct {
 const char* host = "ARTNET";
 const char* version = __DATE__ " / " __TIME__;
 
-Config config;
 ESP8266WebServer server(80);
 ArtnetWifi artnet;
 WiFiManager wifiManager;
@@ -456,6 +455,7 @@ void setup() {
     root["fps"]     = fps;
     String str;
     serializeJson(root, str);
+    server.setContentLength(str.length());
     server.send(200, "application/json", str);
   });
 

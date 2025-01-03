@@ -25,6 +25,14 @@
 #define S_CONFIG_TO_JSON(x, y)   { root.set(y, config.x); }
 #define S_KEYVAL_TO_CONFIG(x, y) { if (server.hasArg(y))    { String str = server.arg(y); strcpy(config.x, str.c_str()); } }
 
+struct Config {
+  unsigned int universe;
+  unsigned int channels;
+  unsigned int delay;
+};
+
+extern Config config;
+
 bool defaultConfig(void);
 bool loadConfig(void);
 bool saveConfig(void);
@@ -38,11 +46,5 @@ void handleRedirect(const char *);
 bool handleStaticFile(String);
 bool handleStaticFile(const char *);
 void handleJSON();
-
-struct Config {
-  unsigned int universe;
-  unsigned int channels;
-  unsigned int delay;
-};
 
 #endif // _WEBINTERFACE_H_
